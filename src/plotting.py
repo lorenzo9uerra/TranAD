@@ -1,10 +1,11 @@
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-import statistics
+import scienceplots
 import os, torch
 import numpy as np
 
-plt.style.use(['science', 'ieee'])
+plt.style.use(['science', 'ieee', "no-latex"])
+plt.rc('font', family='times new roman')
 plt.rcParams["text.usetex"] = False
 plt.rcParams['figure.figsize'] = 6, 2
 
