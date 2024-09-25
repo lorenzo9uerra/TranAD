@@ -15,6 +15,8 @@ from time import time
 from pprint import pprint
 # from beepy import beep
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 def convert_to_windows(data, model):
 	windows = []; w_size = model.n_window
 	for i, g in enumerate(data): 
@@ -56,7 +58,7 @@ def save_model(model, optimizer, scheduler, epoch, accuracy_list):
 def load_model(modelname, dims):
 	import src.models
 	model_class = getattr(src.models, modelname)
-	model = model_class(dims).double()
+	model = model_class(dims).double().to(device)
 	optimizer = torch.optim.AdamW(model.parameters() , lr=model.lr, weight_decay=1e-5)
 	scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 5, 0.9)
 	fname = f'checkpoints/{args.model}_{args.dataset}/model.ckpt'
@@ -73,7 +75,7 @@ def load_model(modelname, dims):
 		epoch = -1; accuracy_list = []
 	return model, optimizer, scheduler, epoch, accuracy_list
 
-def backprop(epoch, model, data, dataO, optimizer, scheduler, training = True):
+def backprop(epoch, model, data, dataO, optimizer, scheduler, device="cpu", training = True):
 	l = nn.MSELoss(reduction = 'mean' if training else 'none')
 	feats = dataO.shape[1]
 	if 'DAGMM' in model.name:
@@ -249,7 +251,7 @@ def backprop(epoch, model, data, dataO, optimizer, scheduler, training = True):
 			loss = loss[:, data.shape[1]-feats:data.shape[1]].view(-1, feats)
 			return loss.detach().numpy(), y_pred.detach().numpy()
 	elif 'TranAD' in model.name:
-		l = nn.MSELoss(reduction = 'none')
+		# l = nn.MSELoss(reduction = 'none') # redundant
 		data_x = torch.DoubleTensor(data); dataset = TensorDataset(data_x, data_x)
 		bs = model.batch if training else len(data)
 		dataloader = DataLoader(dataset, batch_size = bs)
@@ -258,8 +260,8 @@ def backprop(epoch, model, data, dataO, optimizer, scheduler, training = True):
 		if training:
 			for d, _ in dataloader:
 				local_bs = d.shape[0]
-				window = d.permute(1, 0, 2)
-				elem = window[-1, :, :].view(1, local_bs, feats)
+				window = d.permute(1, 0, 2).to(device)
+				elem = window[-1, :, :].view(1, local_bs, feats).to(device)
 				z = model(window, elem)
 				l1 = l(z, elem) if not isinstance(z, tuple) else (1 / n) * l(z[0], elem) + (1 - 1/n) * l(z[1], elem)
 				if isinstance(z, tuple): z = z[1]
@@ -273,13 +275,14 @@ def backprop(epoch, model, data, dataO, optimizer, scheduler, training = True):
 			return np.mean(l1s), optimizer.param_groups[0]['lr']
 		else:
 			for d, _ in dataloader:
-				window = d.permute(1, 0, 2)
-				elem = window[-1, :, :].view(1, bs, feats)
+				window = d.permute(1, 0, 2).to(device)
+				elem = window[-1, :, :].view(1, bs, feats).to(device)
 				z = model(window, elem)
 				if isinstance(z, tuple): z = z[1]
 			loss = l(z, elem)[0]
-			return loss.detach().numpy(), z.detach().numpy()[0]
+			return loss.cpu().detach().numpy(), z.cpu().detach().numpy()[0]
 	else:
+		data = data.to(device)
 		y_pred = model(data)
 		loss = l(y_pred, data)
 		if training:
@@ -290,7 +293,7 @@ def backprop(epoch, model, data, dataO, optimizer, scheduler, training = True):
 			scheduler.step()
 			return loss.item(), optimizer.param_groups[0]['lr']
 		else:
-			return loss.detach().numpy(), y_pred.detach().numpy()
+			return loss.cpu().detach().numpy(), y_pred.cpu().detach().numpy()
 
 if __name__ == '__main__':
 	train_loader, test_loader, labels = load_dataset(args.dataset)
@@ -309,7 +312,7 @@ if __name__ == '__main__':
 		print(f'{color.HEADER}Training {args.model} on {args.dataset}{color.ENDC}')
 		num_epochs = 5; e = epoch + 1; start = time()
 		for e in tqdm(list(range(epoch+1, epoch+num_epochs+1))):
-			lossT, lr = backprop(e, model, trainD, trainO, optimizer, scheduler)
+			lossT, lr = backprop(e, model, trainD, trainO, optimizer, scheduler=scheduler, device=device)
 			accuracy_list.append((lossT, lr))
 		print(color.BOLD+'Training time: '+"{:10.4f}".format(time()-start)+' s'+color.ENDC)
 		save_model(model, optimizer, scheduler, e, accuracy_list)
@@ -319,7 +322,7 @@ if __name__ == '__main__':
 	torch.zero_grad = True
 	model.eval()
 	print(f'{color.HEADER}Testing {args.model} on {args.dataset}{color.ENDC}')
-	loss, y_pred = backprop(0, model, testD, testO, optimizer, scheduler, training=False)
+	loss, y_pred = backprop(0, model, testD, testO, optimizer, scheduler=scheduler, device=device, training=False)
 
 	### Plot curves
 	if not args.test:
@@ -327,12 +330,14 @@ if __name__ == '__main__':
 		plotter(f'{args.model}_{args.dataset}', testO, y_pred, loss, labels)
 
 	### Scores
-	df = pd.DataFrame()
-	lossT, _ = backprop(0, model, trainD, trainO, optimizer, scheduler, training=False)
+	lossT, _ = backprop(0, model, trainD, trainO, optimizer, scheduler, device, training=False)
+	results = []
 	for i in range(loss.shape[1]):
 		lt, l, ls = lossT[:, i], loss[:, i], labels[:, i]
-		result, pred = pot_eval(lt, l, ls); preds.append(pred)
-		df = df.append(result, ignore_index=True)
+		result, pred = pot_eval(lt, l, ls)
+		preds.append(pred)
+		results.append(result)
+	df = pd.DataFrame(results)
 	# preds = np.concatenate([i.reshape(-1, 1) + 0 for i in preds], axis=1)
 	# pd.DataFrame(preds, columns=[str(i) for i in range(10)]).to_csv('labels.csv')
 	lossTfinal, lossFinal = np.mean(lossT, axis=1), np.mean(loss, axis=1)
