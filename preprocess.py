@@ -6,10 +6,27 @@ import pickle
 import json
 from src.folderconstants import *
 from shutil import copyfile
+from sklearn.model_selection import train_test_split
 
 datasets = ['synthetic', 'SMD', 'SWaT', 'SMAP', 'MSL', 'WADI', 'MSDS', 'UCR', 'MBA', 'NAB']
 
 wadi_drop = ['2_LS_001_AL', '2_LS_002_AL','2_P_001_STATUS','2_P_002_STATUS']
+
+def divide_into_bits(series):
+    bit_features = []
+    try:
+        for ip_address in series:
+            octets = ip_address.split('.')
+            if len(octets) != 4:
+                octets = ['0', '0', '0', '0']
+            binary_octets = [bin(int(octet))[2:].zfill(8) for octet in octets]
+            bits = [int(bit) for octet in binary_octets for bit in octet]
+            bit_features.append(bits)
+    except:
+        print(f'Error dividing into bits: {ip_address, type(ip_address)}')
+
+    bit_df = pd.DataFrame(bit_features, columns=[f'{series.name}_bit_{i}' for i in range(32)])
+    return bit_df
 
 def load_and_save(category, filename, dataset, dataset_folder):
     temp = np.genfromtxt(os.path.join(dataset_folder, category, filename),
@@ -194,6 +211,33 @@ def load_data(dataset):
 		labels = np.zeros_like(test)
 		for i in range(-20, 20):
 			labels[ls + i, :] = 1
+		for file in ['train', 'test', 'labels']:
+			np.save(os.path.join(folder, f'{file}.npy'), eval(file))
+	elif dataset == 'NF-CSE-CIC-IDS2018':
+		dataset_folder = "data/NF-CSE-CIC-IDS2018"
+		df = pd.read_csv(os.path.join(dataset_folder, 'NF-CSE-CIC-IDS2018.csv'))
+		df.drop(['Attack'], inplace=True, axis=1)
+		# deletion of record with malformed ip
+		df = df[~df['IPV4_DST_ADDR'].isin(['188.', '0'])]
+		df.fillna(-1, inplace=True)
+		bits_df_SRC = divide_into_bits(df['IPV4_SRC_ADDR'])
+		bits_df_DST = divide_into_bits(df['IPV4_DST_ADDR'])
+
+		bits_df_SRC.reset_index(drop=True, inplace=True)
+		bits_df_DST.reset_index(drop=True, inplace=True)
+		df.reset_index(drop=True, inplace=True)
+		df = pd.concat([df,bits_df_SRC], axis=1)
+		df.reset_index(drop=True, inplace=True)
+		df = pd.concat([df,bits_df_DST], axis=1)
+		del bits_df_SRC, bits_df_DST
+
+		df.drop(['IPV4_SRC_ADDR', 'IPV4_DST_ADDR'], inplace=True, axis=1)
+		train, test = train_test_split(df, test_size=0.2, random_state=42)
+		labels = np.zeros_like(test)
+		labels[test['Label'] == 1] = 1
+		labels = np.delete(labels, 0, 1)
+		train.drop(['Label'], axis=1, inplace=True)
+		test.drop(['Label'], axis=1, inplace=True)
 		for file in ['train', 'test', 'labels']:
 			np.save(os.path.join(folder, f'{file}.npy'), eval(file))
 	else:
