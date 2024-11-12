@@ -22,4 +22,10 @@ parser.add_argument('--retrain',
 parser.add_argument('--less', 
 					action='store_true', 
 					help="train using less data")
+parser.add_argument('--epochs',
+                    metavar='-e',
+                    type=int,
+                    required=False,
+                    default=5,
+                    help="number of epochs")
 args = parser.parse_args()
