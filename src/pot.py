@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 
 from src.spot import SPOT
@@ -131,14 +132,22 @@ def pot_eval(init_score, score, label, q=1e-5, level=0.02):
     Returns:
         dict: pot result dict
     """
+    MAX_RETRIES = 100
+    retry_count = 0
+
     lms = lm[0]
-    while True:
+    while retry_count < MAX_RETRIES:
         try:
             s = SPOT(q)  # SPOT object
             s.fit(init_score, score)  # data import
             s.initialize(level=lms, min_extrema=False, verbose=False)  # initialization step
-        except: lms = lms * 0.999
+        except Exception as e:
+            logging.error(f"Initialization failed: {e}")
+            lms = lms * 0.99
+            retry_count += 1
         else: break
+    else:
+        raise RuntimeError("Maximum retries reached. Initialization failed.")
     ret = s.run(dynamic=False)  # run
     # print(len(ret['alarms']))
     # print(len(ret['thresholds']))
