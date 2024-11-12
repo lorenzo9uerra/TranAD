@@ -250,7 +250,6 @@ def backprop(epoch, model, data, feats, optimizer, scheduler, device="cpu", trai
 			loss = loss[:, data.shape[1]-feats:data.shape[1]].view(-1, feats)
 			return loss.detach().numpy(), y_pred.detach().numpy()
 	elif 'TranAD' in model.name:
-		loss_fn = nn.MSELoss(reduction = 'none')
 		data_x = torch.DoubleTensor(data); dataset = TensorDataset(data_x, data_x)
 		dataloader = DataLoader(dataset, batch_size = model.batch)
 		n = epoch + 1
@@ -324,10 +323,10 @@ if __name__ == '__main__':
 	print(f'{color.HEADER}Testing {args.model} on {args.dataset}{color.ENDC}')
 	scores, _ = backprop(0, model, test, feats, optimizer, scheduler=scheduler, device=device, training=False)
 
-	### Plot curves
-	if not args.test:
-		if 'TranAD' in model.name: testO = torch.roll(testO, 1, 0) 
-		plotter(f'{args.model}_{args.dataset}', testO, y_pred, loss, labels)
+	# ## Plot curves
+	# if not args.test:
+	# 	if 'TranAD' in model.name: testO = torch.roll(test, 1, 0) 
+	# 	plotter(f'{args.model}_{args.dataset}', testO, y_pred, loss, labels)
 
 	### Scores
 	scoresT, _ = backprop(0, model, train, feats, optimizer, scheduler, device, training=False)
