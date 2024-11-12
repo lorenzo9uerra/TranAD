@@ -75,9 +75,8 @@ def load_model(modelname, dims):
 		epoch = -1; accuracy_list = []
 	return model, optimizer, scheduler, epoch, accuracy_list
 
-def backprop(epoch, model, data, dataO, optimizer, scheduler, device="cpu", training = True):
-	l = nn.MSELoss(reduction = 'mean' if training else 'none')
-	feats = dataO.shape[1]
+def backprop(epoch, model, data, feats, optimizer, scheduler, device="cpu", training = True):
+	loss_fn = nn.MSELoss(reduction = 'mean' if training else 'none')
 	if 'DAGMM' in model.name:
 		l = nn.MSELoss(reduction = 'none')
 		compute = ComputeLoss(model, 0.1, 0.005, 'cpu', model.n_gmm)
@@ -251,40 +250,41 @@ def backprop(epoch, model, data, dataO, optimizer, scheduler, device="cpu", trai
 			loss = loss[:, data.shape[1]-feats:data.shape[1]].view(-1, feats)
 			return loss.detach().numpy(), y_pred.detach().numpy()
 	elif 'TranAD' in model.name:
-		# l = nn.MSELoss(reduction = 'none') # redundant
+		loss_fn = nn.MSELoss(reduction = 'none')
 		data_x = torch.DoubleTensor(data); dataset = TensorDataset(data_x, data_x)
-		bs = model.batch if training else len(data)
-		dataloader = DataLoader(dataset, batch_size = bs)
-		n = epoch + 1; w_size = model.n_window
+		dataloader = DataLoader(dataset, batch_size = model.batch)
+		n = epoch + 1
 		l1s, l2s = [], []
 		if training:
-			for d, _ in dataloader:
-				local_bs = d.shape[0]
+			for d, _ in tqdm(dataloader, mininterval=2):
 				window = d.permute(1, 0, 2).to(device)
-				elem = window[-1, :, :].view(1, local_bs, feats).to(device)
-				z = model(window, elem)
-				l1 = l(z, elem) if not isinstance(z, tuple) else (1 / n) * l(z[0], elem) + (1 - 1/n) * l(z[1], elem)
-				if isinstance(z, tuple): z = z[1]
-				l1s.append(torch.mean(l1).item())
-				loss = torch.mean(l1)
+				elem = window[-1, :, :].view(1, d.shape[0], feats).to(device)
+				O1, O2, O2s = model(window, elem)
+				l1 = (1 / n) * loss_fn(O1, elem) + (1 - 1/n) * loss_fn(O2s, elem)
+				l2 = (1 / n) * loss_fn(O2, elem) - (1 - 1/n) * loss_fn(O2s, elem)
 				optimizer.zero_grad()
-				loss.backward(retain_graph=True)
+				l1.backward(retain_graph=True)
+				l2.backward()
 				optimizer.step()
+				l1s.append(l1.item())
+				l2s.append(l2.item())
 			scheduler.step()
-			tqdm.write(f'Epoch {epoch},\tL1 = {np.mean(l1s)}')
+			tqdm.write(f'Epoch {epoch},\tL1 = {np.mean(l1s)},\tL2 = {np.mean(l2s)}')
 			return np.mean(l1s), optimizer.param_groups[0]['lr']
-		else:
+		else: #testing
+			scores = []
 			for d, _ in dataloader:
 				window = d.permute(1, 0, 2).to(device)
-				elem = window[-1, :, :].view(1, bs, feats).to(device)
-				z = model(window, elem)
-				if isinstance(z, tuple): z = z[1]
-			loss = l(z, elem)[0]
-			return loss.cpu().detach().numpy(), z.cpu().detach().numpy()[0]
+				elem = window[-1, :, :].view(1, d.shape[0], feats).to(device)
+				O1, O2, O2s = model(window, elem)
+				s = (loss_fn(O1, elem)/2) + (loss_fn(O2s, elem)/2)
+				scores.append(s[0].cpu().detach().numpy())
+			scores = np.vstack(scores)
+			return np.mean(scores, axis=1), None
 	else:
 		data = data.to(device)
 		y_pred = model(data)
-		loss = l(y_pred, data)
+		loss = loss_fn(y_pred, data)
 		if training:
 			tqdm.write(f'Epoch {epoch},\tMSE = {loss}')
 			optimizer.zero_grad()
@@ -302,27 +302,27 @@ if __name__ == '__main__':
 	model, optimizer, scheduler, epoch, accuracy_list = load_model(args.model, labels.shape[1])
 
 	## Prepare data
-	trainD, testD = next(iter(train_loader)), next(iter(test_loader))
-	trainO, testO = trainD, testD
-	if model.name in ['Attention', 'DAGMM', 'USAD', 'MSCRED', 'CAE_M', 'GDN', 'MTAD_GAT', 'MAD_GAN'] or 'TranAD' in model.name: 
-		trainD, testD = convert_to_windows(trainD, model), convert_to_windows(testD, model)
+	train, test = next(iter(train_loader)), next(iter(test_loader))
+	feats = train.shape[1]
+	if model.name in ['Attention', 'DAGMM', 'USAD', 'MSCRED', 'CAE_M', 'GDN', 'MTAD_GAT', 'MAD_GAN', 'TranAD']: 
+		train, test = convert_to_windows(train, model), convert_to_windows(test, model)
 
 	### Training phase
 	if not args.test:
 		print(f'{color.HEADER}Training {args.model} on {args.dataset}{color.ENDC}')
-		num_epochs = 5; e = epoch + 1; start = time()
-		for e in tqdm(list(range(epoch+1, epoch+num_epochs+1))):
-			lossT, lr = backprop(e, model, trainD, trainO, optimizer, scheduler=scheduler, device=device)
+		start = time()
+		for e in range(epoch+1, epoch+args.epochs+1):
+			lossT, lr = backprop(e, model, train, feats, optimizer, scheduler=scheduler, device=device)
 			accuracy_list.append((lossT, lr))
+			save_model(model, optimizer, scheduler, e, accuracy_list)
 		print(color.BOLD+'Training time: '+"{:10.4f}".format(time()-start)+' s'+color.ENDC)
-		save_model(model, optimizer, scheduler, e, accuracy_list)
 		plot_accuracies(accuracy_list, f'{args.model}_{args.dataset}')
 
 	### Testing phase
 	torch.zero_grad = True
 	model.eval()
 	print(f'{color.HEADER}Testing {args.model} on {args.dataset}{color.ENDC}')
-	loss, y_pred = backprop(0, model, testD, testO, optimizer, scheduler=scheduler, device=device, training=False)
+	scores, _ = backprop(0, model, test, feats, optimizer, scheduler=scheduler, device=device, training=False)
 
 	### Plot curves
 	if not args.test:
@@ -330,21 +330,23 @@ if __name__ == '__main__':
 		plotter(f'{args.model}_{args.dataset}', testO, y_pred, loss, labels)
 
 	### Scores
-	lossT, _ = backprop(0, model, trainD, trainO, optimizer, scheduler, device, training=False)
+	scoresT, _ = backprop(0, model, train, feats, optimizer, scheduler, device, training=False)
 	results = []
-	for i in range(loss.shape[1]):
-		lt, l, ls = lossT[:, i], loss[:, i], labels[:, i]
+	scores = scores.reshape(-1, 1)
+	scoresT = scoresT.reshape(-1, 1)
+	for i in range(scores.shape[1]):
+		lt, l, ls = scoresT[:, i], scores[:, i], labels[:, i]
 		result, pred = pot_eval(lt, l, ls)
 		preds.append(pred)
 		results.append(result)
 	df = pd.DataFrame(results)
 	# preds = np.concatenate([i.reshape(-1, 1) + 0 for i in preds], axis=1)
 	# pd.DataFrame(preds, columns=[str(i) for i in range(10)]).to_csv('labels.csv')
-	lossTfinal, lossFinal = np.mean(lossT, axis=1), np.mean(loss, axis=1)
+	scoresTfinal, scoresFinal = np.mean(scoresT, axis=1), np.mean(scores, axis=1)
 	labelsFinal = (np.sum(labels, axis=1) >= 1) + 0
-	result, _ = pot_eval(lossTfinal, lossFinal, labelsFinal)
-	result.update(hit_att(loss, labels))
-	result.update(ndcg(loss, labels))
+	result, _ = pot_eval(scoresTfinal, scoresFinal, labelsFinal)
+	result.update(hit_att(scores, labels))
+	result.update(ndcg(scores, labels))
 	print(df)
 	pprint(result)
 	# pprint(getresults2(df, result))
