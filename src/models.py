@@ -493,18 +493,20 @@ class TranAD(nn.Module):
 		super(TranAD, self).__init__()
 		self.name = 'TranAD'
 		self.lr = lr
-		self.batch = 128
+		self.batch = 256
 		self.n_feats = feats
 		self.n_window = 10
+		self.num_layers = 2
 		self.n = self.n_feats * self.n_window
 		self.pos_encoder = PositionalEncoding(2 * feats, 0.1, self.n_window)
 		encoder_layers = TransformerEncoderLayer(d_model=2 * feats, nhead=feats, dim_feedforward=16, dropout=0.1)
-		self.transformer_encoder = TransformerEncoder(encoder_layers, 1, enable_nested_tensor=False)
+		self.transformer_encoder = TransformerEncoder(encoder_layers, self.num_layers, enable_nested_tensor=False)
 		decoder_layers1 = TransformerDecoderLayer(d_model=2 * feats, nhead=feats, dim_feedforward=16, dropout=0.1)
-		self.transformer_decoder1 = TransformerDecoder(decoder_layers1, 1)
+		self.transformer_decoder1 = TransformerDecoder(decoder_layers1, self.num_layers)
 		decoder_layers2 = TransformerDecoderLayer(d_model=2 * feats, nhead=feats, dim_feedforward=16, dropout=0.1)
-		self.transformer_decoder2 = TransformerDecoder(decoder_layers2, 1)
-		self.fcn = nn.Sequential(nn.Linear(2 * feats, feats), nn.Sigmoid())
+		self.transformer_decoder2 = TransformerDecoder(decoder_layers2, self.num_layers)
+		self.fcn1 = nn.Sequential(nn.Linear(2 * feats, feats), nn.Sigmoid())
+		self.fcn2 = nn.Sequential(nn.Linear(2 * feats, feats), nn.Sigmoid())
 
 	def encode(self, src, c):
 		src = torch.cat((src, c), dim=2)
@@ -517,9 +519,9 @@ class TranAD(nn.Module):
 		# Phase 1 - Without anomaly scores
 		c = torch.zeros_like(src)
 		tgt = tgt.repeat(1, 1, 2)
-		O1 = self.fcn(self.transformer_decoder1(tgt, self.encode(src, c)))
-		O2 = self.fcn(self.transformer_decoder2(tgt, self.encode(src, c)))
+		O1 = self.fcn1(self.transformer_decoder1(tgt, self.encode(src, c)))
+		O2 = self.fcn2(self.transformer_decoder2(tgt, self.encode(src, c)))
 		# Phase 2 - With anomaly scores
-		error = (O1 - src) ** 2
-		O2s = self.fcn(self.transformer_decoder2(tgt, self.encode(src, error)))
+		error = torch.abs(O1 - src)
+		O2s = self.fcn2(self.transformer_decoder2(tgt, self.encode(src, error)))
 		return O1, O2, O2s

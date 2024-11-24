@@ -29,7 +29,7 @@ lr_d = {
 		'UCR': 0.006, 
 		'NAB': 0.009, 
 		'MBA': 0.001,
-        'NF-CSE-CIC-IDS2018': 1e-3, 
+        'NF-CSE-CIC-IDS2018': 1e-5, 
 	}
 lr = lr_d[args.dataset]
 
