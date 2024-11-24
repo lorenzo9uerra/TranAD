@@ -7,6 +7,7 @@ import json
 from src.folderconstants import *
 from shutil import copyfile
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
 
 datasets = ['synthetic', 'SMD', 'SWaT', 'SMAP', 'MSL', 'WADI', 'MSDS', 'UCR', 'MBA', 'NAB']
 
@@ -220,6 +221,14 @@ def load_data(dataset):
 		# deletion of record with malformed ip
 		df = df[~df['IPV4_DST_ADDR'].isin(['188.', '0'])]
 		df.fillna(-1, inplace=True)
+		sc = MinMaxScaler()
+		numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+		numeric_cols = [col for col in numeric_cols if col not in ["IPV4_SRC_ADDR", "IPV4_DST_ADDR"]]
+		df['PROTOCOL'] = df['PROTOCOL'].astype('category').cat.codes
+		df['L4_SRC_PORT'] = df['L4_SRC_PORT'].astype('category').cat.codes
+		df['L4_DST_PORT'] = df['L4_DST_PORT'].astype('category').cat.codes
+		df[numeric_cols] = sc.fit_transform(df[numeric_cols])
+				
 		bits_df_SRC = divide_into_bits(df['IPV4_SRC_ADDR'])
 		bits_df_DST = divide_into_bits(df['IPV4_DST_ADDR'])
 
