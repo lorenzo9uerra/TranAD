@@ -349,7 +349,7 @@ def backprop(
             scheduler.step()
             mean_l1s = np.mean(l1s)
             mean_l2s = np.mean(l2s)
-            tqdm.write(f"Epoch {epoch},\tLoss 1 = {mean_l1s},\tLoss 2 = {mean_l2s}")
+            tqdm.write(f"Epoch {epoch + 1},\tLoss 1 = {mean_l1s},\tLoss 2 = {mean_l2s}")
             return (mean_l1s, mean_l2s), optimizer.param_groups[0]["lr"]
         else:  # testing
             scores = []
@@ -357,10 +357,10 @@ def backprop(
                 window = d.permute(1, 0, 2).to(device)
                 elem = window[-1, :, :].view(1, d.shape[0], feats).to(device)
                 O1, O2, O2s = model(window, elem)
-                mse_O1 = mse_loss(O1, elem).mean(dim=2)
-                mse_O2s = mse_loss(O2s, elem).mean(dim=2)
+                mse_O1 = mse_loss(O1, elem)
+                mse_O2s = mse_loss(O2s, elem)
                 s = (torch.sqrt(mse_O1 * feats) / 2) + (torch.sqrt(mse_O2s * feats) / 2)
-                scores.append(s.view(-1).cpu().detach().numpy())
+                scores.append(s.view(-1, feats).cpu().detach().numpy())
             scores = np.concatenate(scores)
             return scores, None
     else:
@@ -388,6 +388,7 @@ if __name__ == "__main__":
             "epochs": args.epochs,
             "encoder_layers": 2,
             "decoder_layers": 2,
+            "window_size": 16,
         },
     )
     train_loader, test_loader, labels = load_dataset(args.dataset)
@@ -423,7 +424,7 @@ if __name__ == "__main__":
             )
             accuracy_list.append((lossT[0], lossT[1]))
             save_model(model, optimizer, scheduler, e, accuracy_list)
-            wandb.log({"Loss 1": lossT[0], "Loss 2": lossT[1], "Epoch": e + 1})
+            wandb.log({"Loss 1": lossT[0], "Loss 2": lossT[1], "Epoch": e})
         print(
             color.BOLD
             + "Training time: "
@@ -458,8 +459,6 @@ if __name__ == "__main__":
         0, model, train, feats, optimizer, scheduler, device, training=False
     )
     results = []
-    scores = scores.reshape(-1, 1)
-    scoresT = scoresT.reshape(-1, 1)
     for i in range(scores.shape[1]):
         lt, l, ls = scoresT[:, i], scores[:, i], labels[:, i]
         result, pred = pot_eval(lt, l, ls)
@@ -473,5 +472,5 @@ if __name__ == "__main__":
     result.update(ndcg(scores, labels))
     print(df)
     pprint(result)
-
+    wandb.log(result)
     wandb.finish()
