@@ -495,7 +495,7 @@ class TranAD(nn.Module):
 		self.lr = lr
 		self.batch = 256
 		self.n_feats = feats
-		self.n_window = 10
+		self.n_window = 16
 		self.num_layers = 2
 		self.n = self.n_feats * self.n_window
 		self.pos_encoder = PositionalEncoding(2 * feats, 0.1, self.n_window)
