@@ -522,6 +522,6 @@ class TranAD(nn.Module):
 		O1 = self.fcn1(self.transformer_decoder1(tgt, self.encode(src, c)))
 		O2 = self.fcn2(self.transformer_decoder2(tgt, self.encode(src, c)))
 		# Phase 2 - With anomaly scores
-		error = torch.abs(O1 - src)
+		error = (O1 - src)**2
 		O2s = self.fcn2(self.transformer_decoder2(tgt, self.encode(src, error)))
 		return O1, O2, O2s

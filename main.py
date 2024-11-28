@@ -306,8 +306,8 @@ def backprop(
         data_x = torch.DoubleTensor(data)
         dataset = TensorDataset(data_x, data_x)
         dataloader = DataLoader(dataset, batch_size=model.batch)
-        epsilon = 0.89
-        factor = epsilon**epoch
+        epsilon = 1.25
+        factor = epsilon**-epoch
         max_iters = len(dataloader)
         l1s, l2s = [], []
         if training:
@@ -319,18 +319,11 @@ def backprop(
                 )  # [1, batch, feats]
                 O1, O2, O2s = model(window, elem)
                 # Loss calculated per mini-batch
-                mse_O1 = mse_loss(O1, elem).mean(dim=2)
-                mse_O2 = mse_loss(O2, elem).mean(dim=2)
-                mse_O2s = mse_loss(O2s, elem).mean(dim=2)
-                l1 = factor * torch.sqrt(mse_O1 * feats) + (1 - factor) * torch.sqrt(
-                    mse_O2s * feats
-                )
-                l2 = factor * torch.sqrt(mse_O2 * feats) - (1 - factor) * torch.sqrt(
-                    mse_O2s * feats
-                )
-                # average across mini-batch
-                l1 = l1.mean()
-                l2 = l2.mean()
+                norm_01 = torch.linalg.norm(O1 - elem, ord=2, dim=2)
+                norm_02 = torch.linalg.norm(O2 - elem, ord=2, dim=2)
+                norm_02s = torch.linalg.norm(O2s - elem, ord=2, dim=2)
+                l1 = factor * norm_01.mean() + (1 - factor) * norm_02s.mean()
+                l2 = factor * norm_02.mean() - (1 - factor) * norm_02s.mean()
                 optimizer.zero_grad()
                 l1.backward(retain_graph=True)
                 l2.backward()
@@ -357,10 +350,10 @@ def backprop(
                 window = d.permute(1, 0, 2).to(device)
                 elem = window[-1, :, :].view(1, d.shape[0], feats).to(device)
                 O1, O2, O2s = model(window, elem)
-                mse_O1 = mse_loss(O1, elem)
-                mse_O2s = mse_loss(O2s, elem)
-                s = (torch.sqrt(mse_O1 * feats) / 2) + (torch.sqrt(mse_O2s * feats) / 2)
-                scores.append(s.view(-1, feats).cpu().detach().numpy())
+                norm_01 = torch.norm(O1 - elem, dim=2)
+                norm_02s = torch.norm(O2s - elem, dim=2)
+                s = (norm_01 / 2) + (norm_02s/ 2)
+                scores.append(s.view(-1).cpu().detach().numpy())
             scores = np.concatenate(scores)
             return scores, None
     else:
@@ -459,6 +452,7 @@ if __name__ == "__main__":
         0, model, train, feats, optimizer, scheduler, device, training=False
     )
     results = []
+    scores, scoresT = scores.reshape(-1, 1), scoresT.reshape(-1, 1)
     for i in range(scores.shape[1]):
         lt, l, ls = scoresT[:, i], scores[:, i], labels[:, i]
         result, pred = pot_eval(lt, l, ls)
