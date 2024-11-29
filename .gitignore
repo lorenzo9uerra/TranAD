@@ -9,6 +9,7 @@ data/MSDS/metrics
 data/MSDS/train.csv
 data/MSDS/test.csv
 data/NF-CSE-CIC-IDS2018v2
+data/NF-CSE-CIC-IDS2018
 
 # C extensions
 *.so
